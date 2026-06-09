@@ -251,6 +251,23 @@
     /* ── Offline banner ── */
     #offline-banner{display:none;position:fixed;top:0;left:0;right:0;background:var(--amber);color:#000;font-size:12px;font-weight:700;text-align:center;padding:8px;z-index:999}
 
+    /* ── Voice input ── */
+    .voice-section{display:flex;flex-direction:column;align-items:center;gap:10px;padding:18px 0 6px}
+    .voice-btn{width:72px;height:72px;border-radius:99px;border:none;cursor:pointer;background:linear-gradient(135deg,#EF4444,#DC2626);display:flex;align-items:center;justify-content:center;font-size:28px;box-shadow:0 6px 24px #EF444455;transition:transform .15s,box-shadow .15s}
+    .voice-btn.listening{background:linear-gradient(135deg,#22C55E,#16A34A);box-shadow:0 6px 32px #22C55E88;animation:voicePulse 1.2s ease-in-out infinite}
+    .voice-btn.processing{background:linear-gradient(135deg,#F59E0B,#D97706);box-shadow:0 6px 24px #F59E0B55}
+    @keyframes voicePulse{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}
+    .voice-btn:active:not(.listening){transform:scale(.92)}
+    .voice-status{font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;min-height:18px;text-align:center}
+    .voice-status.listening{color:var(--green)}
+    .voice-status.processing{color:var(--amber)}
+    .voice-status.error{color:var(--red)}
+    .voice-transcript{background:var(--surface2);border:1px solid var(--border2);border-radius:12px;padding:10px 14px;font-size:13px;color:var(--text);width:100%;min-height:44px;display:none;margin-top:4px;font-style:italic;line-height:1.5}
+    .voice-transcript.visible{display:block}
+    .voice-divider{display:flex;align-items:center;gap:10px;width:100%;margin:6px 0}
+    .voice-divider span{font-size:11px;color:var(--text3);font-weight:600;white-space:nowrap}
+    .voice-divider::before,.voice-divider::after{content:'';flex:1;height:1px;background:var(--border)}
+
     /* ── Install banner ── */
     #install-banner{
       display:none;position:fixed;
@@ -449,14 +466,19 @@ function monthEntries(){return state.entries.filter(e=>e.date&&e.date.y===state.
 function dayEntries(d){return monthEntries().filter(e=>e.date.d===d)}
 function dayNet(d){
   const es=dayEntries(d);
-  return{inc:es.filter(e=>e.type==='income').reduce((s,e)=>s+e.amount,0),
-         exp:es.filter(e=>e.type==='expense').reduce((s,e)=>s+e.amount,0),count:es.length};
+  return{
+    inc:es.filter(e=>e.type==='income').reduce((s,e)=>s+e.amount,0),
+    exp:es.filter(e=>e.type==='expense').reduce((s,e)=>s+e.amount,0),
+    inv:es.filter(e=>e.type==='investment').reduce((s,e)=>s+e.amount,0),
+    count:es.length
+  };
 }
 function totals(){
   const me=monthEntries();
   const inc=me.filter(e=>e.type==='income').reduce((s,e)=>s+e.amount,0);
   const exp=me.filter(e=>e.type==='expense').reduce((s,e)=>s+e.amount,0);
-  return{inc,exp,net:inc-exp};
+  const inv=me.filter(e=>e.type==='investment').reduce((s,e)=>s+e.amount,0);
+  return{inc,exp,inv,net:inc-exp};
 }
 
 // ── DOM helpers ───────────────────────────────────────────────────────────
@@ -478,14 +500,18 @@ function div(cls,style,...children){return el('div',{class:cls||'',style:style||
 function entryRowEl(entry){
   const cat=CATS[entry.category]||CATS.Other;
   const isInc=entry.type==='income';
+  const isInv=entry.type==='investment';
+  const amtColor=isInc?'#22C55E':isInv?'#818CF8':'#F87171';
+  const amtSign=isInc?'+':isInv?'↗':'−';
+  const typeTag=isInv?el('span',{style:{marginLeft:'6px',fontSize:'9px',background:'#818CF822',color:'#818CF8',border:'1px solid #818CF844',borderRadius:'99px',padding:'1px 6px',fontWeight:'700'}},'INVEST'):'';
   return div('entry-row',null,
     div('entry-icon',{background:cat.color+'22'},cat.icon),
     div('entry-info',null,
       div('entry-name',null,entry.label||entry.category),
-      div('entry-cat',null,entry.category)
+      el('div',{class:'entry-cat',style:{display:'flex',alignItems:'center',gap:'4px'}},entry.category,typeTag)
     ),
     div('entry-amt',null,
-      el('div',{class:'entry-val',style:{color:isInc?'#22C55E':'#F87171'}},(isInc?'+':'−')+fmt(entry.amount)),
+      el('div',{class:'entry-val',style:{color:amtColor}},amtSign+fmt(entry.amount)),
       el('button',{class:'entry-del',onClick:()=>removeEntry(entry.id)},'✕ remove')
     )
   );
@@ -539,8 +565,8 @@ function renderLogin(){
 }
 
 function renderHeader(){
-  const {inc,exp}=totals();
-  const remaining=(state.budget||inc)-exp;
+  const {inc,exp,inv}=totals();
+  const remaining=(state.budget||inc)-exp; // investments do NOT affect budget
   const pct=state.budget?Math.min((exp/state.budget)*100,100):0;
   const pos=remaining>=0;
   const u=state.user;
@@ -575,18 +601,15 @@ function renderHeader(){
   );
 
   // Stats
-  const statRow=div('stat-row',null,
-    (() => {
-      const c=div('stat-card',{borderColor:'#22C55E33',boxShadow:'0 0 20px #22C55E10'});
-      c.innerHTML=`<div class="stat-label"><span>💵</span> Earned</div><div class="stat-value" style="color:#22C55E">${fmt(inc)}</div><div class="stat-sub">${monthEntries().filter(e=>e.type==='income').length} entries</div>`;
-      return c;
-    })(),
-    (() => {
-      const c=div('stat-card',{borderColor:'#EF444433',boxShadow:'0 0 20px #EF444410'});
-      c.innerHTML=`<div class="stat-label"><span>💸</span> Spent</div><div class="stat-value" style="color:#F87171">${fmt(exp)}</div><div class="stat-sub">${monthEntries().filter(e=>e.type==='expense').length} entries</div>`;
-      return c;
-    })()
-  );
+  const statRow=div('',{display:'flex',gap:'8px',marginBottom:'12px',overflowX:'auto',paddingBottom:'2px'});
+  [{label:'Earned',val:inc,color:'#22C55E',icon:'💵',type:'income'},
+   {label:'Spent',val:exp,color:'#F87171',icon:'💸',type:'expense'},
+   {label:'Invested',val:inv,color:'#818CF8',icon:'📈',type:'investment'},
+  ].forEach(({label,val,color,icon,type:t})=>{
+    const c=div('stat-card',{borderColor:color+'33',boxShadow:`0 0 20px ${color}10`,flexShrink:'0',minWidth:'120px'});
+    c.innerHTML=`<div class="stat-label"><span>${icon}</span> ${label}</div><div class="stat-value" style="color:${color}">${fmt(val)}</div><div class="stat-sub">${monthEntries().filter(e=>e.type===t).length} entries</div>`;
+    statRow.appendChild(c);
+  });
 
   // Remaining
   const remCard=div('rem-card',{
@@ -641,7 +664,7 @@ function renderCalendar(container){
   const grid=div('cal-grid');
   for(let i=0;i<fdow;i++)grid.appendChild(div('cal-cell empty'));
   for(let d=1;d<=dim;d++){
-    const{inc,exp,count}=dayNet(d);
+    const{inc,exp,inv,count}=dayNet(d);
     const isToday=d===todD&&curM===todM&&curY===todY;
     const isSel=d===selDay;
     let cls='cal-cell'+(isToday?' today':'')+(isSel?' selected':'');
@@ -650,6 +673,7 @@ function renderCalendar(container){
       const dots=div('cal-dots');
       if(exp>0)dots.appendChild(div('dot',{background:'#EF4444'}));
       if(inc>0)dots.appendChild(div('dot',{background:'#22C55E'}));
+      if(inv>0)dots.appendChild(div('dot',{background:'#818CF8'}));
       cell.appendChild(dots);
     }
     grid.appendChild(cell);
@@ -686,13 +710,14 @@ function renderLog(container){
 
 function renderSummary(container){
   container.appendChild(monthNavEl());
-  const{inc,exp,net}=totals();
+  const{inc,exp,inv,net}=totals();
   const dim=new Date(state.curY,state.curM+1,0).getDate();
 
   const overCard=div('s-card',null,el('div',{class:'s-card-title'},'Month Overview'));
   [
     {label:'Total Income',val:inc,color:'#22C55E'},
     {label:'Total Expenses',val:exp,color:'#F87171'},
+    {label:'Total Invested',val:inv,color:'#818CF8'},
     {label:'Net Balance',val:net,color:net>=0?'#4ADE80':'#FCA5A5'},
     ...(state.budget?[{label:'Monthly Budget',val:state.budget,color:'#6366F1'}]:[]),
   ].forEach(r=>{
@@ -704,7 +729,9 @@ function renderSummary(container){
   container.appendChild(overCard);
 
   const catData=Object.keys(CATS).map(cat=>({
-    cat,total:monthEntries().filter(e=>e.category===cat&&e.type==='expense').reduce((s,e)=>s+e.amount,0)
+    cat,
+    total:monthEntries().filter(e=>e.category===cat&&(e.type==='expense'||e.type==='investment')).reduce((s,e)=>s+e.amount,0),
+    isInv:monthEntries().filter(e=>e.category===cat).every(e=>e.type==='investment')
   })).filter(x=>x.total>0).sort((a,b)=>b.total-a.total);
 
   if(catData.length>0){
@@ -755,6 +782,7 @@ function renderAddModal(){
   const toggleWrap=div('type-toggle');
   const catWrap=div('cat-chips');
   const saveBtn=el('button',{class:'btn-save',style:{background:'#EF4444'},onClick:()=>{
+    if(!type)type='expense';
     const n=parseFloat(amtInput.value);
     if(!n||n<=0){amtInput.style.borderColor='#EF4444';return}
     const entry={id:Date.now(),type,amount:n,label:lblInput.value,category,date:{y:curY,m:curM,d:selDay}};
@@ -762,17 +790,27 @@ function renderAddModal(){
     closeModal();
   }},'Save Entry');
 
+  const TYPE_CFG={
+    expense:{label:'💸 Expense',color:'#EF4444',defCat:'Food'},
+    income:{label:'💵 Income',color:'#22C55E',defCat:'Income'},
+    investment:{label:'📈 Investment',color:'#6366F1',defCat:'Savings'},
+  };
   const updateToggle=()=>{
     toggleWrap.innerHTML='';
-    ['expense','income'].forEach(t=>{
-      const b=el('button',{class:'type-btn',style:{background:type===t?(t==='income'?'#22C55E':'#EF4444'):'transparent',color:type===t?'#fff':'var(--text2)'},onClick:()=>{type=t;category=t==='income'?'Income':'Food';updateToggle();updateCats();saveBtn.style.background=t==='income'?'#22C55E':'#EF4444'}},t==='expense'?'💸 Expense':'💵 Income');
+    Object.entries(TYPE_CFG).forEach(([t,cfg])=>{
+      const active=type===t;
+      const b=el('button',{class:'type-btn',style:{background:active?cfg.color:'transparent',color:active?'#fff':'var(--text2)',fontSize:'11px'},
+        onClick:()=>{type=t;category=cfg.defCat;updateToggle();updateCats();saveBtn.style.background=cfg.color;}
+      },cfg.label);
       toggleWrap.appendChild(b);
     });
   };
   const updateCats=()=>{
     catWrap.innerHTML='';
     Object.entries(CATS).forEach(([k,v])=>{
-      const show=type==='income'?['Income','Savings','Other'].includes(k):k!=='Income';
+      const show=type==='income'?['Income','Savings','Other'].includes(k):
+             type==='investment'?['Savings','Other','Housing'].includes(k)||CATS[k]?.custom:
+             k!=='Income';
       if(!show)return;
       const chip=el('button',{class:'cat-chip',style:{background:category===k?v.color+'33':'var(--surface2)',borderColor:category===k?v.color:'var(--border2)',color:category===k?v.color:'var(--text2)'},onClick:()=>{category=k;updateCats()}},v.icon+' '+k);
       catWrap.appendChild(chip);
@@ -780,9 +818,184 @@ function renderAddModal(){
   };
   updateToggle();updateCats();
 
+  // ── Voice input section ──
+  const voiceSection = div('voice-section');
+  const voiceBtn = el('button',{class:'voice-btn'},'🎤');
+  const voiceStatus = el('div',{class:'voice-status'},'Tap to speak your expenses');
+  const voiceTranscript = el('div',{class:'voice-transcript'});
+  voiceSection.append(voiceBtn, voiceStatus, voiceTranscript);
+
+  // Spoken number converter
+  const ONES_MAP = {zero:0,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19,a:1,won:1,to:2,too:2,fore:4,ate:8};
+  const TENS_MAP = {twenty:20,thirty:30,forty:40,fifty:50,sixty:60,seventy:70,eighty:80,ninety:90};
+  const MULT_MAP = {hundred:100,thousand:1000,lakh:100000,lac:100000,million:1000000,crore:10000000};
+  function convertSpokenNums(text){
+    const tokens=text.toLowerCase().split(/\s+/);
+    const out=[];let i=0;
+    while(i<tokens.length){
+      const tok=tokens[i];
+      if(ONES_MAP[tok]!==undefined||TENS_MAP[tok]!==undefined||tok==='hundred'||MULT_MAP[tok]!==undefined){
+        const numToks=[];let j=i;
+        while(j<tokens.length){
+          const t=tokens[j];
+          if(ONES_MAP[t]!==undefined||TENS_MAP[t]!==undefined||t==='hundred'||MULT_MAP[t]!==undefined||t==='point'||t==='dot'){numToks.push(t);j++;}
+          else break;
+        }
+        let total=0,current=0;
+        for(let k=0;k<numToks.length;k++){
+          const w=numToks[k];
+          if(ONES_MAP[w]!==undefined)current+=ONES_MAP[w];
+          else if(TENS_MAP[w]!==undefined)current+=TENS_MAP[w];
+          else if(w==='hundred')current=(current||1)*100;
+          else if(MULT_MAP[w]!==undefined){current=(current||1)*MULT_MAP[w];total+=current;current=0;}
+          else if((w==='point'||w==='dot')&&numToks[k+1]){total+=current+parseFloat('0.'+( ONES_MAP[numToks[k+1]]??numToks[k+1]));current=0;k++;}
+        }
+        total+=current;
+        if(total>0){out.push(String(total));i=j;}
+        else{out.push(tok);i++;}
+      } else {out.push(tok);i++;}
+    }
+    return out.join(' ');
+  }
+
+  // Parse voice transcript into form fields
+  function parseVoiceIntoForm(transcript){
+    const converted = convertSpokenNums(transcript);
+    // Try to find amount
+    const amtMatch = converted.match(/(\d+(?:\.\d+)?)/);
+    if(amtMatch){
+      amtInput.value = amtMatch[1];
+      amount = parseFloat(amtMatch[1]);
+      amtInput.style.borderColor = 'var(--accent)';
+    }
+    // Try to find category
+    const lower = converted.toLowerCase();
+    const catKeys = Object.keys(CATS);
+    const EXTRA_MAP = {uber:'Transport',ola:'Transport',taxi:'Transport',cab:'Transport',petrol:'Transport',fuel:'Transport',
+      groceries:'Food',lunch:'Food',dinner:'Food',breakfast:'Food',coffee:'Food',restaurant:'Food',
+      salary:'Income',sal:'Income',income:'Income',earned:'Income',bonus:'Income',freelance:'Income',
+      medicine:'Health',doctor:'Health',hospital:'Health',pharmacy:'Health',medicines:'Health',
+      electricity:'Bills',rent:'Housing',wifi:'Bills',internet:'Bills',recharge:'Bills',
+      movie:'Fun',movies:'Fun',game:'Fun',games:'Fun',party:'Fun',
+      investment:'Savings',invest:'Savings',mutual:'Savings','mutual funds':'Savings',sip:'Savings',};
+    let matched = null;
+    // Check extra map first
+    for(const[word,cat] of Object.entries(EXTRA_MAP)){
+      if(lower.includes(word)){matched=cat;break;}
+    }
+    // Then check actual category names
+    if(!matched){
+      for(const k of catKeys){
+        if(lower.includes(k.toLowerCase())){matched=k;break;}
+      }
+    }
+    // Detect type from keywords
+    const incomeWords = ['salary','income','earned','received','bonus','freelance','stipend','got paid'];
+    const investWords = ['mutual fund','sip','invest','stock','share','crypto','fd','fixed deposit','gold','nps','ppf','dividend'];
+    const isIncome = incomeWords.some(w=>lower.includes(w));
+    const isInvest = investWords.some(w=>lower.includes(w));
+    if(isIncome){type='income';matched=matched||'Income';}
+    else if(isInvest){type='investment';matched=matched||'Savings';}
+    else{type='expense';}
+
+    if(matched&&CATS[matched]){
+      category=matched;
+    }
+    // Extract label: everything that's not a number or category keyword
+    const withoutNum = converted.replace(/\d+(?:\.\d+)?/g,'').trim();
+    const label_guess = withoutNum.replace(/spent|paid|bought|received|earned|got|on|for|to|the|a|an/gi,'').trim();
+    if(label_guess.length>1&&label_guess.length<40){
+      lblInput.value = label_guess.charAt(0).toUpperCase()+label_guess.slice(1);
+    }
+    updateToggle();
+    updateCats();
+    saveBtn.style.background = type==='income'?'#22C55E':type==='investment'?'#6366F1':'#EF4444';
+  }
+
+  let recognition = null;
+  let isListening = false;
+
+  function startVoice(){
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if(!SpeechRecognition){
+      voiceStatus.textContent = '❌ Voice not supported in this browser';
+      voiceStatus.className = 'voice-status error';
+      return;
+    }
+    recognition = new SpeechRecognition();
+    recognition.lang = 'en-IN';
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      isListening = true;
+      voiceBtn.className = 'voice-btn listening';
+      voiceBtn.textContent = '⏹';
+      voiceStatus.textContent = '🎤 Listening... speak now';
+      voiceStatus.className = 'voice-status listening';
+      voiceTranscript.className = 'voice-transcript';
+      voiceTranscript.textContent = '';
+    };
+    recognition.onresult = (e) => {
+      let interim = '', final = '';
+      for(let i=e.resultIndex;i<e.results.length;i++){
+        if(e.results[i].isFinal)final+=e.results[i][0].transcript;
+        else interim+=e.results[i][0].transcript;
+      }
+      voiceTranscript.className = 'voice-transcript visible';
+      voiceTranscript.textContent = final||interim;
+      if(final){
+        voiceBtn.className = 'voice-btn processing';
+        voiceBtn.textContent = '⏳';
+        voiceStatus.textContent = '✨ Processing...';
+        voiceStatus.className = 'voice-status processing';
+        setTimeout(()=>{
+          parseVoiceIntoForm(final);
+          voiceBtn.className = 'voice-btn';
+          voiceBtn.textContent = '🎤';
+          voiceStatus.textContent = '✅ Done! Check fields below';
+          voiceStatus.className = 'voice-status';
+          isListening = false;
+        },400);
+      }
+    };
+    recognition.onerror = (e) => {
+      voiceBtn.className = 'voice-btn';
+      voiceBtn.textContent = '🎤';
+      isListening = false;
+      if(e.error==='no-speech'){
+        voiceStatus.textContent = 'No speech detected. Try again.';
+      } else if(e.error==='not-allowed'){
+        voiceStatus.textContent = '❌ Mic permission denied. Allow in browser settings.';
+        voiceStatus.className = 'voice-status error';
+      } else {
+        voiceStatus.textContent = '❌ Error: '+e.error+'. Try again.';
+        voiceStatus.className = 'voice-status error';
+      }
+    };
+    recognition.onend = () => {
+      if(isListening){
+        voiceBtn.className = 'voice-btn';
+        voiceBtn.textContent = '🎤';
+        isListening = false;
+      }
+    };
+    recognition.start();
+  }
+
+  voiceBtn.addEventListener('click', ()=>{
+    if(isListening){recognition&&recognition.stop();}
+    else{startVoice();}
+  });
+
+  const divider = div('voice-divider',null, el('span',null,'or fill manually'));
+
   modal.append(
     div('modal-handle'),
     el('div',{class:'modal-title'},'📝 Log Entry — '+MONTHS[curM]+' '+selDay),
+    voiceSection,
+    divider,
     toggleWrap,
     el('label',{class:'f-label'},'Amount ($)'),amtInput,
     el('label',{class:'f-label'},'Description'),lblInput,
