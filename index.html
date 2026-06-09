@@ -1147,21 +1147,20 @@ function render(){
   else if(state.view==='list')renderLog(content);
   else renderSummary(content);
 
-  // FAB container with + and mic buttons
-  let fabContainer=document.getElementById('fab-container');
-  if(!fabContainer){
-    fabContainer=el('div',{id:'fab-container'});
+  // FAB container — appended to document.body so it's never wiped by app.innerHTML=''
+  if(!document.getElementById('fab-container')){
+    const fabContainer=el('div',{id:'fab-container'});
     const fabMic=el('button',{id:'fab-mic',title:'Speak to log expenses'});
     fabMic.textContent='🎤';
     const fab=el('button',{id:'fab',onClick:()=>setState({modal:'add'})});
     fab.textContent='+';
     fabContainer.appendChild(fabMic);
     fabContainer.appendChild(fab);
-    app.appendChild(fabContainer);
-    // Toast elements
+    document.body.appendChild(fabContainer);
+    // Toast
     const toast=el('div',{id:'voice-toast'});
-    toast.innerHTML=`<div id="voice-toast-status">🎤 Listening...</div><div id="voice-toast-text"></div><div id="voice-toast-result"></div>`;
-    app.appendChild(toast);
+    toast.innerHTML=`<div id="voice-toast-status"></div><div id="voice-toast-text"></div><div id="voice-toast-result"></div>`;
+    document.body.appendChild(toast);
     initFabMic(fabMic);
   }
 
