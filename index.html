@@ -89,16 +89,52 @@
     }
     #tabs{display:flex;gap:6px;padding:12px 20px;background:var(--bg);position:sticky;top:0;z-index:50;border-bottom:1px solid var(--border)}
     #content{flex:1;overflow-y:auto;padding:0 20px;padding-bottom:calc(80px + var(--safe-b))}
+    #fab-container{
+      position:fixed;bottom:calc(24px + var(--safe-b));
+      left:max(calc(50% - 220px),16px);right:max(calc(50% - 220px),16px);
+      display:flex;justify-content:flex-end;align-items:center;gap:12px;
+      z-index:40;pointer-events:none;
+    }
+    #fab,#fab-mic{
+      width:56px;height:56px;border-radius:99px;border:none;cursor:pointer;
+      display:flex;align-items:center;justify-content:center;font-size:26px;
+      transition:transform .15s,box-shadow .15s;pointer-events:all;
+    }
     #fab{
-      position:fixed;bottom:calc(24px + var(--safe-b));right:max(calc(50% - 220px),16px);
-      width:56px;height:56px;border-radius:99px;border:none;
       background:linear-gradient(135deg,var(--accent),#7C3AED);
-      color:#fff;font-size:28px;cursor:pointer;z-index:40;
-      box-shadow:0 8px 28px #4F46E555;
-      display:flex;align-items:center;justify-content:center;
-      transition:transform .15s,box-shadow .15s;
+      color:#fff;box-shadow:0 8px 28px #4F46E555;
     }
     #fab:active{transform:scale(.92);box-shadow:0 4px 12px #4F46E533}
+    #fab-mic{
+      background:linear-gradient(135deg,#EF4444,#DC2626);
+      color:#fff;box-shadow:0 8px 28px #EF444455;
+    }
+    #fab-mic.listening{
+      background:linear-gradient(135deg,#22C55E,#16A34A);
+      box-shadow:0 8px 32px #22C55E88;
+      animation:voicePulse 1.2s ease-in-out infinite;
+    }
+    #fab-mic.processing{
+      background:linear-gradient(135deg,#F59E0B,#D97706);
+      box-shadow:0 6px 24px #F59E0B55;animation:none;
+    }
+    #fab-mic:active{transform:scale(.92)}
+    #voice-toast{
+      position:fixed;bottom:calc(96px + var(--safe-b));
+      left:max(calc(50% - 220px),16px);right:max(calc(50% - 220px),16px);
+      background:var(--surface);border:1px solid var(--border2);border-radius:16px;
+      padding:14px 16px;z-index:41;box-shadow:0 8px 32px #0008;
+      display:none;animation:slideUp .2s ease;
+    }
+    #voice-toast.visible{display:block}
+    #voice-toast-status{font-size:12px;font-weight:700;color:var(--text2);margin-bottom:6px}
+    #voice-toast-status.listening{color:var(--green)}
+    #voice-toast-status.processing{color:var(--amber)}
+    #voice-toast-status.success{color:var(--green)}
+    #voice-toast-status.error{color:var(--red)}
+    #voice-toast-text{font-size:13px;color:var(--text);font-style:italic;line-height:1.5;min-height:20px}
+    #voice-toast-result{font-size:12px;color:var(--text2);margin-top:8px;display:none}
+    #voice-toast-result.visible{display:block}
 
     /* ── Top bar ── */
     .top-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
@@ -1111,11 +1147,22 @@ function render(){
   else if(state.view==='list')renderLog(content);
   else renderSummary(content);
 
-  // FAB
-  let fab=document.getElementById('fab');
-  if(!fab){
-    fab=el('button',{id:'fab',onClick:()=>setState({modal:'add'})},'+ ');
-    app.appendChild(fab);
+  // FAB container with + and mic buttons
+  let fabContainer=document.getElementById('fab-container');
+  if(!fabContainer){
+    fabContainer=el('div',{id:'fab-container'});
+    const fabMic=el('button',{id:'fab-mic',title:'Speak to log expenses'});
+    fabMic.textContent='🎤';
+    const fab=el('button',{id:'fab',onClick:()=>setState({modal:'add'})});
+    fab.textContent='+';
+    fabContainer.appendChild(fabMic);
+    fabContainer.appendChild(fab);
+    app.appendChild(fabContainer);
+    // Toast elements
+    const toast=el('div',{id:'voice-toast'});
+    toast.innerHTML=`<div id="voice-toast-status">🎤 Listening...</div><div id="voice-toast-text"></div><div id="voice-toast-result"></div>`;
+    app.appendChild(toast);
+    initFabMic(fabMic);
   }
 
   // Modals
@@ -1123,6 +1170,204 @@ function render(){
   if(state.modal==='add')renderAddModal();
   if(state.modal==='budget')renderBudgetModal();
   if(state.showUserMenu)modalRoot.appendChild(renderUserMenu());
+}
+
+// ── FAB Mic: voice → auto-log ─────────────────────────────────────────────
+const SPOKEN_ONES={zero:0,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,eleven:11,twelve:12,thirteen:13,fourteen:14,fifteen:15,sixteen:16,seventeen:17,eighteen:18,nineteen:19,a:1,won:1,to:2,too:2,fore:4,ate:8};
+const SPOKEN_TENS={twenty:20,thirty:30,forty:40,fifty:50,sixty:60,seventy:70,eighty:80,ninety:90};
+const SPOKEN_MULT={hundred:100,thousand:1000,lakh:100000,lac:100000,million:1000000,crore:10000000};
+
+function spokenToNumber(tokens){
+  let total=0,current=0;
+  for(let k=0;k<tokens.length;k++){
+    const w=tokens[k];
+    if(SPOKEN_ONES[w]!==undefined)current+=SPOKEN_ONES[w];
+    else if(SPOKEN_TENS[w]!==undefined)current+=SPOKEN_TENS[w];
+    else if(w==='hundred')current=(current||1)*100;
+    else if(SPOKEN_MULT[w]!==undefined){current=(current||1)*SPOKEN_MULT[w];total+=current;current=0;}
+  }
+  return total+current||null;
+}
+
+function convertSpokenToDigits(text){
+  const tokens=text.toLowerCase().split(/\s+/);
+  const out=[];let i=0;
+  while(i<tokens.length){
+    const tok=tokens[i];
+    if(SPOKEN_ONES[tok]!==undefined||SPOKEN_TENS[tok]!==undefined||tok==='hundred'||SPOKEN_MULT[tok]!==undefined){
+      const numToks=[];let j=i;
+      while(j<tokens.length){
+        const t=tokens[j];
+        if(SPOKEN_ONES[t]!==undefined||SPOKEN_TENS[t]!==undefined||t==='hundred'||SPOKEN_MULT[t]!==undefined){numToks.push(t);j++;}
+        else break;
+      }
+      const num=spokenToNumber(numToks);
+      if(num&&num>0){out.push(String(num));i=j;}
+      else{out.push(tok);i++;}
+    } else{out.push(tok);i++;}
+  }
+  return out.join(' ');
+}
+
+const VOICE_CAT_MAP={
+  uber:'Transport',ola:'Transport',taxi:'Transport',cab:'Transport',auto:'Transport',
+  petrol:'Transport',fuel:'Transport',metro:'Transport',bus:'Transport',train:'Transport',
+  groceries:'Food',grocery:'Food',lunch:'Food',dinner:'Food',breakfast:'Food',
+  coffee:'Food',restaurant:'Food',food:'Food',snack:'Food',swiggy:'Food',zomato:'Food',
+  salary:'Income',income:'Income',earned:'Income',bonus:'Income',freelance:'Income',stipend:'Income',
+  medicine:'Health',doctor:'Health',hospital:'Health',pharmacy:'Health',medicines:'Health',
+  electricity:'Bills',wifi:'Bills',internet:'Bills',recharge:'Bills',phone:'Bills',
+  movie:'Fun',movies:'Fun',game:'Fun',games:'Fun',party:'Fun',outing:'Fun',
+  rent:'Housing',maintenance:'Housing',
+  'mutual fund':'Savings',sip:'Savings',stock:'Savings',shares:'Savings',
+  crypto:'Savings',fd:'Savings',gold:'Savings',nps:'Savings',ppf:'Savings',
+};
+const INVEST_WORDS=['mutual fund','sip','stock','share','crypto','fd','fixed deposit','gold','nps','ppf','bond','invest'];
+const INCOME_WORDS=['salary','income','earned','received','bonus','freelance','stipend','got paid'];
+
+function parseVoiceQuick(text){
+  const converted=convertSpokenToDigits(text);
+  const lower=converted.toLowerCase();
+  const amtMatch=converted.match(/(\d+(?:\.\d+)?)/);
+  if(!amtMatch)return null;
+  const amount=parseFloat(amtMatch[1]);
+
+  // Detect type
+  const isIncome=INCOME_WORDS.some(w=>lower.includes(w));
+  const isInvest=INVEST_WORDS.some(w=>lower.includes(w));
+  const type=isIncome?'income':isInvest?'investment':'expense';
+
+  // Detect category
+  let category=type==='income'?'Income':type==='investment'?'Savings':'Other';
+  for(const[word,cat] of Object.entries(VOICE_CAT_MAP)){
+    if(lower.includes(word)){category=cat;break;}
+  }
+
+  // Build label: strip numbers and common filler words
+  const label=converted
+    .replace(/\d+(?:\.\d+)?/g,'')
+    .replace(/(spent|paid|for|on|the|a|an|i|me|my)/gi,'')
+    .trim()
+    .replace(/\s+/g,' ')
+    .slice(0,40)||category;
+
+  return{amount,type,category,label:label.charAt(0).toUpperCase()+label.slice(1)};
+}
+
+function showToast(status,text,result){
+  const toast=document.getElementById('voice-toast');
+  const statusEl=document.getElementById('voice-toast-status');
+  const textEl=document.getElementById('voice-toast-text');
+  const resultEl=document.getElementById('voice-toast-result');
+  if(!toast)return;
+  toast.className='visible';
+  statusEl.className=status;
+  statusEl.textContent=
+    status==='listening'?'🎤 Listening... speak now':
+    status==='processing'?'⏳ Processing...':
+    status==='success'?'✅ Saved!':
+    status==='error'?'❌ Error':'';
+  textEl.textContent=text||'';
+  if(result){resultEl.className='visible';resultEl.textContent=result;}
+  else{resultEl.className='';resultEl.textContent='';}
+  if(status==='success'||status==='error'){
+    setTimeout(()=>{toast.className='';},3000);
+  }
+}
+
+function initFabMic(btn){
+  const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SpeechRecognition){
+    btn.style.display='none'; // hide if not supported
+    return;
+  }
+  let recognition=null;
+  let listening=false;
+
+  btn.addEventListener('click',()=>{
+    if(listening){
+      recognition&&recognition.stop();
+      listening=false;
+      btn.className='';
+      btn.textContent='🎤';
+      document.getElementById('voice-toast').className='';
+      return;
+    }
+    recognition=new SpeechRecognition();
+    recognition.lang='en-IN';
+    recognition.continuous=false;
+    recognition.interimResults=true;
+    recognition.maxAlternatives=3;
+
+    recognition.onstart=()=>{
+      listening=true;
+      btn.className='listening';
+      btn.textContent='⏹';
+      showToast('listening','Say your expense — e.g. "200 food" or "5000 salary"');
+    };
+
+    recognition.onresult=(e)=>{
+      let interim='',final='';
+      for(let i=e.resultIndex;i<e.results.length;i++){
+        if(e.results[i].isFinal)final+=e.results[i][0].transcript;
+        else interim+=e.results[i][0].transcript;
+      }
+      if(interim)showToast('listening',interim);
+      if(final){
+        btn.className='processing';
+        btn.textContent='⏳';
+        showToast('processing',final);
+        listening=false;
+
+        setTimeout(async()=>{
+          const parsed=parseVoiceQuick(final);
+          if(!parsed||!parsed.amount){
+            btn.className='';btn.textContent='🎤';
+            showToast('error',`Couldn't understand "${final}". Try again.`);
+            return;
+          }
+
+          // Auto-save directly to Firebase
+          try{
+            const today=new Date();
+            const entry={
+              id:Date.now()+Math.floor(Math.random()*9999),
+              type:parsed.type,
+              amount:parsed.amount,
+              label:parsed.label,
+              category:parsed.category,
+              date:{y:today.getFullYear(),m:today.getMonth(),d:today.getDate()},
+            };
+            await addEntry(entry);
+            btn.className='';btn.textContent='🎤';
+            const sign=parsed.type==='income'?'+':parsed.type==='investment'?'↗':'−';
+            const cat=CATS[parsed.category]||{icon:'📦'};
+            showToast('success',
+              `${cat.icon} ${parsed.label}`,
+              `${sign}${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(parsed.amount)} · ${parsed.category}`
+            );
+          }catch(err){
+            btn.className='';btn.textContent='🎤';
+            showToast('error','Save failed. Try again.');
+          }
+        },400);
+      }
+    };
+
+    recognition.onerror=(e)=>{
+      listening=false;
+      btn.className='';btn.textContent='🎤';
+      if(e.error==='no-speech')showToast('error','No speech detected. Tap and try again.');
+      else if(e.error==='not-allowed')showToast('error','Mic permission denied. Allow in browser settings.');
+      else showToast('error','Error: '+e.error);
+    };
+
+    recognition.onend=()=>{
+      if(listening){listening=false;btn.className='';btn.textContent='🎤';}
+    };
+
+    recognition.start();
+  });
 }
 
 // Initial render
